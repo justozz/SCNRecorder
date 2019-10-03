@@ -31,6 +31,7 @@ public protocol Recorder: AnyObject {
     static var defaultTimeScale: CMTimeScale { get }
     
     var filters: [Filter] { get set }
+    var audioAdapter: AudioAdapter? { get }
     
     func makeVideoRecording(to url: URL,
                             fileType: AVFileType,

@@ -50,6 +50,8 @@ final class VideoRecorder {
     
     let queue: DispatchQueue
     
+    let audioAdapter: AudioAdapter?
+    
     var state: State = .ready {
         didSet {
             recording?.state = state.recordingState
@@ -73,6 +75,7 @@ final class VideoRecorder {
     var onFinalState: () -> Void = { }
     
     init(url: URL,
+         audioAdapter: AudioAdapter?,
          fileType: AVFileType,
          videoSettings: [String: Any],
          videoSourceFormatHint: CMFormatDescription?,
@@ -117,6 +120,7 @@ final class VideoRecorder {
         }
         
         self.queue = queue
+        self.audioAdapter = audioAdapter
     }
     
     deinit {
@@ -128,10 +132,12 @@ extension VideoRecorder {
     
     func startSession(at seconds: TimeInterval) {
         startSeconds = seconds + 0.2
+        audioAdapter?.startSession()
         assetWriter.startSession(atSourceTime: timeFromSeconds(seconds))
     }
     
     func endSession(at seconds: TimeInterval) {
+        audioAdapter?.endSession()
         assetWriter.endSession(atSourceTime: timeFromSeconds(seconds))
     }
     

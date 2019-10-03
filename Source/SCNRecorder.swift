@@ -48,7 +48,7 @@ public final class SCNRecorder: NSObject {
     
     let recorder: InternalRecorder
     
-    let audioAdapter: AudioAdapter
+    let micAudioAdapter: AudioAdapter
     
     let audioQueue = DispatchQueue(label: "SCNRecorder.AudioQueue", qos: .userInitiated)
     
@@ -59,7 +59,7 @@ public final class SCNRecorder: NSObject {
         
         self.recordableView = recordableView
         self.recorder = try InternalRecorder(sceneView)
-        audioAdapter = AudioAdapter(queue: audioQueue, callback: { [recorder] (sampleBuffer) in
+        micAudioAdapter = AudioAdapter(queue: audioQueue, callback: { [recorder] (sampleBuffer) in
             recorder.produceAudioSampleBuffer(sampleBuffer)
         })
         
@@ -75,6 +75,10 @@ public final class SCNRecorder: NSObject {
 extension SCNRecorder: Recorder {
     
     public static let defaultTimeScale: CMTimeScale = InternalRecorder.defaultTimeScale
+    
+    public var audioAdapter: AudioAdapter? {
+        return micAudioAdapter
+    }
     
     public var filters: [Filter] {
         get {
@@ -225,34 +229,5 @@ extension SCNRecorder: ARSCNViewDelegate {
     public func session(_ session: ARSession, didOutputAudioSampleBuffer audioSampleBuffer: CMSampleBuffer) {
         arSceneViewDelegate?.session?(session, didOutputAudioSampleBuffer: audioSampleBuffer)
         recorder.produceAudioSampleBuffer(audioSampleBuffer)
-    }
-}
-
-extension SCNRecorder {
-    
-    final class AudioAdapter: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
-        
-        typealias Callback = (_ sampleBuffer: CMSampleBuffer) -> Void
-        
-        let output: AVCaptureAudioDataOutput
-        
-        let queue: DispatchQueue
-        
-        let callback: Callback
-        
-        init(queue: DispatchQueue, callback: @escaping Callback) {
-            self.queue = queue
-            self.callback = callback
-            output = AVCaptureAudioDataOutput()
-            
-            super.init()
-            output.setSampleBufferDelegate(self, queue: queue)
-        }
-        
-        @objc func captureOutput(_ output: AVCaptureOutput,
-                                 didOutput sampleBuffer: CMSampleBuffer,
-                                 from connection: AVCaptureConnection) {
-            callback(sampleBuffer)
-        }
     }
 }

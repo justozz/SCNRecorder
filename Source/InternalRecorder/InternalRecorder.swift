@@ -121,6 +121,10 @@ extension InternalRecorder: Recorder {
     
     public static let defaultTimeScale: CMTimeScale = 600
     
+    var audioAdapter: AudioAdapter? {
+        return nil
+    }
+    
     var filters: [Filter] {
         get {
             var filters = [Filter]()
@@ -141,6 +145,7 @@ extension InternalRecorder: Recorder {
                             timeScale: CMTimeScale = defaultTimeScale) throws -> VideoRecording {
         
         let videoRecorder = try VideoRecorder(url: url,
+                                              audioAdapter: audioAdapter,
                                               fileType: fileType,
                                               videoSettings: pixelBufferProducer.recommendedVideoSettings,
                                               videoSourceFormatHint: nil,
