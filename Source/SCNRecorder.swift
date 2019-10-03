@@ -48,10 +48,6 @@ public final class SCNRecorder: NSObject {
     
     let recorder: InternalRecorder
     
-    let micAudioAdapter: AudioAdapter
-    
-    let audioQueue = DispatchQueue(label: "SCNRecorder.AudioQueue", qos: .userInitiated)
-    
     public init(_ sceneView: SceneKit.SCNView) throws {
         guard let recordableView = sceneView as? RecordableView else {
             throw Error.notRecordableView
@@ -59,9 +55,6 @@ public final class SCNRecorder: NSObject {
         
         self.recordableView = recordableView
         self.recorder = try InternalRecorder(sceneView)
-        micAudioAdapter = AudioAdapter(queue: audioQueue, callback: { [recorder] (sampleBuffer) in
-            recorder.produceAudioSampleBuffer(sampleBuffer)
-        })
         
         super.init()
         recordableView.recorder = self
@@ -77,7 +70,7 @@ extension SCNRecorder: Recorder {
     public static let defaultTimeScale: CMTimeScale = InternalRecorder.defaultTimeScale
     
     public var audioAdapter: AudioAdapter? {
-        return micAudioAdapter
+        return nil
     }
     
     public var filters: [Filter] {

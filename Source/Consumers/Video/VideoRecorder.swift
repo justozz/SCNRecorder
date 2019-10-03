@@ -119,7 +119,6 @@ final class VideoRecorder {
             throw assetWriter.error ?? Error.notStarted
         }
         audioAdapter?.startSession()
-        print(audioAdapter)
         
         self.queue = queue
         self.audioAdapter = audioAdapter

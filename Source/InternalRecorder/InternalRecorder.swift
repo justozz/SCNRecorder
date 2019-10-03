@@ -51,7 +51,11 @@ final class InternalRecorder {
     
     let photoQueue: DispatchQueue
     
+    let audioQueue: DispatchQueue
+    
     let synchronizationQueue: DispatchQueue
+    
+    var micAudioAdapter: AudioAdapter?
     
     let api: API
     
@@ -96,6 +100,7 @@ final class InternalRecorder {
         
         queue = DispatchQueue(label: "Recorder.DispatchQueue", qos: .userInitiated)
         photoQueue = DispatchQueue(label: "SCNRecorder.Photo.DispatchQueue", qos: .userInitiated)
+        audioQueue = DispatchQueue(label: "SCNRecorder.AudioQueue", qos: .userInitiated)
         synchronizationQueue = DispatchQueue(label: "Recorder.SynchronizationQueue", qos: .userInitiated)
         
         switch sceneView.renderingAPI {
@@ -122,7 +127,7 @@ extension InternalRecorder: Recorder {
     public static let defaultTimeScale: CMTimeScale = 600
     
     var audioAdapter: AudioAdapter? {
-        return nil
+        return micAudioAdapter
     }
     
     var filters: [Filter] {
@@ -143,6 +148,10 @@ extension InternalRecorder: Recorder {
     func makeVideoRecording(to url: URL,
                             fileType: AVFileType = .mov,
                             timeScale: CMTimeScale = defaultTimeScale) throws -> VideoRecording {
+        
+        micAudioAdapter = AudioAdapter(queue: audioQueue, callback: { [weak self] (sampleBuffer) in
+            self?.produceAudioSampleBuffer(sampleBuffer)
+        })
         
         let videoRecorder = try VideoRecorder(url: url,
                                               audioAdapter: audioAdapter,
