@@ -38,7 +38,7 @@ extension VideoRecorder {
     }
 }
 
-final class VideoRecorder {
+final class VideoRecorder: NSObject {
     
     let timeScale: CMTimeScale
     
@@ -49,6 +49,8 @@ final class VideoRecorder {
     let audioAssetWriterInput: AVAssetWriterInput?
     
     let queue: DispatchQueue
+    
+    let audioSession = AVCaptureSession()
     
     var state: State = .ready {
         didSet {
@@ -112,11 +114,28 @@ final class VideoRecorder {
             self.audioAssetWriterInput = nil
         }
         
-        guard assetWriter.startWriting() else {
-            throw assetWriter.error ?? Error.notStarted
+        self.queue = queue
+        
+        super.init()
+        
+        if let device = AVCaptureDevice.default(.builtInMicrophone, for: .audio, position: .unspecified), let input = try? AVCaptureDeviceInput(device: device) {
+            
+            let output = AVCaptureAudioDataOutput()
+            output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "Audio", qos: .userInitiated))
+            
+            if audioSession.canAddInput(input) {
+                audioSession.addInput(input)
+                if audioSession.canAddOutput(output) {
+                    audioSession.addOutput(output)
+                }
+            }
         }
         
-        self.queue = queue
+        audioSession.startRunning()
+        guard assetWriter.startWriting() else {
+            audioSession.stopRunning()
+            throw assetWriter.error ?? Error.notStarted
+        }
     }
     
     deinit {
@@ -128,18 +147,22 @@ extension VideoRecorder {
     
     func startSession(at seconds: TimeInterval) {
         startSeconds = seconds + 0.2
+        audioSession.startRunning()
         assetWriter.startSession(atSourceTime: timeFromSeconds(seconds))
     }
     
     func endSession(at seconds: TimeInterval) {
+        audioSession.stopRunning()
         assetWriter.endSession(atSourceTime: timeFromSeconds(seconds))
     }
     
     func finishWriting(completionHandler handler: @escaping () -> Void) {
+        audioSession.stopRunning()
         assetWriter.finishWriting(completionHandler: handler)
     }
     
     func cancelWriting() {
+        audioSession.stopRunning()
         assetWriter.cancelWriting()
     }
     
@@ -242,6 +265,13 @@ extension VideoRecorder: AudioSampleBufferConsumer {
     
     func setAudioSampleBuffer(_ audioSampleBuffer: CMSampleBuffer) {
         state = state.setAudioSampleBuffer(audioSampleBuffer, to: self)
+    }
+}
+
+extension VideoRecorder: AVCaptureAudioDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        print("! GOT BUFFER !")
+        state = state.setAudioSampleBuffer(sampleBuffer, to: self)
     }
 }
 
