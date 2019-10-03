@@ -43,13 +43,15 @@ extension InternalRecorder {
     }
 }
 
-final class InternalRecorder {
+final class InternalRecorder: NSObject {
     
     let sceneView: SCNView
     
     let queue: DispatchQueue
     
     let photoQueue: DispatchQueue
+    
+    let audioQueue: DispatchQueue
     
     let synchronizationQueue: DispatchQueue
     
@@ -91,11 +93,14 @@ final class InternalRecorder {
         }
     }
     
+    private var audioSession = AVCaptureSession()
+    
     public init(_ sceneView: SCNView) throws {
         self.sceneView = sceneView
         
         queue = DispatchQueue(label: "Recorder.DispatchQueue", qos: .userInitiated)
         photoQueue = DispatchQueue(label: "SCNRecorder.Photo.DispatchQueue", qos: .userInitiated)
+        audioQueue = DispatchQueue(label: "SCNRecorder.Audio.DispatchQueue", qos: .userInitiated)
         synchronizationQueue = DispatchQueue(label: "Recorder.SynchronizationQueue", qos: .userInitiated)
         
         switch sceneView.renderingAPI {
@@ -113,6 +118,21 @@ final class InternalRecorder {
                 throw Error.eaglContext
             }
             api = .openGLES2(eaglContext)
+        }
+        
+        super.init()
+        
+        let microphone = AVCaptureDevice.default(.builtInMicrophone, for: AVMediaType.audio, position: .unspecified)!
+        let micInput = try! AVCaptureDeviceInput(device: microphone)
+        
+        if audioSession.canAddInput(micInput) {
+            audioSession.addInput(micInput)
+            
+            let micOutput = AVCaptureAudioDataOutput()
+            if audioSession.canAddOutput(micOutput) {
+                audioSession.addOutput(micOutput)
+                micOutput.setSampleBufferDelegate(self, queue: audioQueue)
+            }
         }
     }
 }
@@ -153,11 +173,13 @@ extension InternalRecorder: Recorder {
                 return
             }
             self?.removePixelBufferConsumer(videoRecorder)
+            self?.audioSession.stopRunning()
         }
         
         addPixelBufferConsumer(videoRecorder, queue: videoRecorder.queue)
         addAudioSampleBufferConsumer(videoRecorder, queue: videoRecorder.queue)
         
+        audioSession.startRunning()
         return videoRecorder.makeRecording()
     }
     
@@ -348,5 +370,28 @@ extension InternalRecorder {
         let attachments = CVBufferGetAttachments(pixelBuffer, .shouldPropagate)
         let colorSpace = attachments.map({CVImageBufferCreateColorSpaceFromAttachments($0)})??.takeRetainedValue()
         pixelBufferProducer.context.render(image, to: pixelBuffer, bounds: image.extent, colorSpace: colorSpace)
+    }
+}
+
+extension InternalRecorder: AVCaptureAudioDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        print("Get buffer")
+        
+        guard hasAudioSampleBufferConsumers else {
+            return
+        }
+        
+        queue.async { [weak self] in
+            guard let `self` = self else {
+                return
+            }
+            
+            self.audioSampleBufferConsumers = self.audioSampleBufferConsumers.filter({ $0.0.get() != nil })
+            self.audioSampleBufferConsumers.forEach({ (consumer, queue) in
+                queue.async {
+                    consumer.get()?.setAudioSampleBuffer(sampleBuffer)
+                }
+            })
+        }
     }
 }
