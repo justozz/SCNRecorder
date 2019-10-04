@@ -38,7 +38,7 @@ extension VideoRecorder {
     }
 }
 
-final class VideoRecorder {
+final class VideoRecorder: NSObject {
     
     let timeScale: CMTimeScale
     
@@ -49,6 +49,15 @@ final class VideoRecorder {
     let audioAssetWriterInput: AVAssetWriterInput?
     
     let queue: DispatchQueue
+    
+    var audioRecorder: AVAudioRecorder?
+    
+    private class var audioRecorderSettings: [String: Any] {
+        return [AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 44100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue]
+    }
     
     var state: State = .ready {
         didSet {
@@ -112,14 +121,33 @@ final class VideoRecorder {
             self.audioAssetWriterInput = nil
         }
         
+        self.queue = queue
+        
+        let audioUrl = URL(fileURLWithPath: "\(NSTemporaryDirectory())\(UUID().uuidString)\(UUID().uuidString).m4a")
+        audioRecorder = try? AVAudioRecorder(url: audioUrl, settings: VideoRecorder.audioRecorderSettings)
+        
+        super.init()
+        
+        if audioRecorder != nil {
+            audioRecorder!.delegate = self
+        }
+        
+        audioRecorder?.record()
         guard assetWriter.startWriting() else {
             throw assetWriter.error ?? Error.notStarted
         }
         
-        self.queue = queue
+        
     }
     
     deinit {
+        audioRecorder?.stop()
+        
+        if let url = audioRecorder?.url {
+            try? FileManager.default.removeItem(at: url)
+        }
+        
+        audioRecorder = nil
         state = state.cancel(self)
     }
 }
@@ -128,18 +156,40 @@ extension VideoRecorder {
     
     func startSession(at seconds: TimeInterval) {
         startSeconds = seconds + 0.2
+        audioRecorder?.record()
         assetWriter.startSession(atSourceTime: timeFromSeconds(seconds))
     }
     
     func endSession(at seconds: TimeInterval) {
+        audioRecorder?.pause()
         assetWriter.endSession(atSourceTime: timeFromSeconds(seconds))
     }
     
     func finishWriting(completionHandler handler: @escaping () -> Void) {
-        assetWriter.finishWriting(completionHandler: handler)
+        audioRecorder?.stop()
+        assetWriter.finishWriting { [weak self] in
+            guard let strongSelf = self, let audioUrl = self?.audioRecorder?.url else {
+                self?.audioRecorder = nil
+                handler()
+                return
+            }
+            
+            self?.audioRecorder = nil
+            
+            strongSelf.mergeVideoWithAudio(videoUrl: strongSelf.assetWriter.outputURL, audioUrl: audioUrl, success: { (url) in
+                _ = try? FileManager.default.replaceItemAt(strongSelf.assetWriter.outputURL, withItemAt: url)
+                try? FileManager.default.removeItem(at: audioUrl)
+                try? FileManager.default.removeItem(at: url)
+                handler()
+            }) { _ in
+                handler()
+            }
+        }
     }
     
     func cancelWriting() {
+        audioRecorder?.stop()
+        audioRecorder = nil
         assetWriter.cancelWriting()
     }
     
@@ -245,9 +295,72 @@ extension VideoRecorder: AudioSampleBufferConsumer {
     }
 }
 
+extension VideoRecorder: AVAudioRecorderDelegate {
+    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        audioRecorder?.stop()
+        audioRecorder = nil
+    }
+}
+
 fileprivate extension VideoRecorder {
-    
     func timeFromSeconds(_ seconds: TimeInterval) -> CMTime {
         return CMTime(seconds: seconds, preferredTimescale: timeScale)
+    }
+    
+    func mergeVideoWithAudio(videoUrl: URL, audioUrl: URL, success: @escaping ((URL) -> Void), failure: @escaping ((Swift.Error?) -> Void)) {
+        let mixComposition: AVMutableComposition = AVMutableComposition()
+        var mutableCompositionVideoTrack: [AVMutableCompositionTrack] = []
+        var mutableCompositionAudioTrack: [AVMutableCompositionTrack] = []
+        let totalVideoCompositionInstruction : AVMutableVideoCompositionInstruction = AVMutableVideoCompositionInstruction()
+
+        let aVideoAsset: AVAsset = AVAsset(url: videoUrl)
+        let aAudioAsset: AVAsset = AVAsset(url: audioUrl)
+
+        if let videoTrack = mixComposition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid), let audioTrack = mixComposition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+            mutableCompositionVideoTrack.append(videoTrack)
+            mutableCompositionAudioTrack.append(audioTrack)
+
+            if let aVideoAssetTrack: AVAssetTrack = aVideoAsset.tracks(withMediaType: .video).first, let aAudioAssetTrack: AVAssetTrack = aAudioAsset.tracks(withMediaType: .audio).first {
+                do {
+                    try mutableCompositionVideoTrack.first?.insertTimeRange(CMTimeRangeMake(start: CMTime.zero, duration: aVideoAssetTrack.timeRange.duration), of: aVideoAssetTrack, at: CMTime.zero)
+                    try mutableCompositionAudioTrack.first?.insertTimeRange(CMTimeRangeMake(start: CMTime.zero, duration: aVideoAssetTrack.timeRange.duration), of: aAudioAssetTrack, at: CMTime.zero)
+                       videoTrack.preferredTransform = aVideoAssetTrack.preferredTransform
+
+                } catch{
+                    print(error)
+                }
+
+
+               totalVideoCompositionInstruction.timeRange = CMTimeRangeMake(start: CMTime.zero,duration: aVideoAssetTrack.timeRange.duration)
+            }
+        }
+
+        let outputURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("\(UUID().uuidString)\(UUID().uuidString).mp4")
+            if let exportSession = AVAssetExportSession(asset: mixComposition, presetName: AVAssetExportPresetHighestQuality) {
+                exportSession.outputURL = outputURL
+                exportSession.outputFileType = AVFileType.mp4
+                exportSession.shouldOptimizeForNetworkUse = true
+
+                /// try to export the file and handle the status cases
+                exportSession.exportAsynchronously(completionHandler: {
+                    switch exportSession.status {
+                    case .failed:
+                        if let _error = exportSession.error {
+                            failure(_error)
+                        }
+
+                    case .cancelled:
+                        if let _error = exportSession.error {
+                            failure(_error)
+                        }
+
+                    default:
+                        print("finished")
+                        success(outputURL)
+                    }
+                })
+            } else {
+                failure(nil)
+            }
     }
 }
